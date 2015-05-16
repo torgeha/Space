@@ -33,3 +33,5 @@ resource.h
 *.aps
 *.rc
 *.vcxproj
+*.filters
+*.users
