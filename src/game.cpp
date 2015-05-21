@@ -42,7 +42,7 @@
 #define HORIZONTAL_SHIP_VEL 10.f
 #define SHIP_TILT_INC .2f
 #define SHIP_TILT_FRICTION .1f
-#define SHIP_MAX_TILT 1.f
+#define SHIP_MAX_TILT 2.f
 #define SHIP_HVEL_FRICTION .1f
 #define TILT_FUEL_COST .03f
 #define FRAME_FUEL_COST .01f
@@ -55,6 +55,11 @@
 #define STARTING_TIME 2.f
 #define DYING_TIME 2.f
 #define VICTORY_TIME = 8.f
+
+#define LOG(ALL_ARGS) printf ALL_ARGS
+//#define LOG(ALL_ARGS)
+
+#define FIRST_CHALLANGE 3000.f
 
 float g_current_race_pos = 0.f;
 float g_camera_offset = 0.f;
@@ -160,6 +165,41 @@ void UnloadResources()
 	CORE_UnloadBmp(g_star);
 }
 
+float g_next_challange_area = FIRST_CHALLANGE;
+
+void GenNextElements()
+{
+	// Called every game loop, but only does work when close to next challange area
+	if (g_current_race_pos + 2 * G_HEIGHT > g_next_challange_area)
+	{
+		float current_y = g_next_challange_area;
+		LOG(("Current: %f\n", g_next_challange_area));
+
+		// Choose how many layers of rocks
+		int nlayers = (int)CORE_URand(1, 3);
+		LOG(("nlayers: %d\n", nlayers));
+		for (int i = 0; i < nlayers; i++)
+		{
+			LOG(("Where: %f\n", current_y));
+
+			// Choose how many rocks
+			int nrocks = (int)CORE_URand(1, 2);
+			LOG(("nrocks: %d\n", nrocks));
+
+			// Generate rocks
+			for (int i = 0; i < nrocks; i++)
+			{
+				vec2 pos = vmake(CORE_FRand(0.f, G_WIDTH), current_y);
+				vec2 vel = vmake(CORE_FRand(-1.f, 1.f), CORE_FRand(-1.f, 1.f));
+				InsertEntity(E_ROCK, pos, vel, ROCK_RADIUS, g_rock[1 /*CORE_URand(0, 4)*/], true);
+			}
+			current_y += CORE_FRand(300.f, 600.f);
+		}
+		g_next_challange_area = current_y + CORE_FRand(0.5f * G_WIDTH, 1.5f * G_HEIGHT);
+		LOG(("Next: %f\n", g_next_challange_area));
+	}
+}
+
 void Render()
 {
 	glClear(GL_COLOR_BUFFER_BIT);
@@ -238,6 +278,7 @@ void ResetNewGame()
 	g_rock_chance = START_ROCK_CHANCE_PER_PIXEL;
 	g_gs = GS_STARTING;
 	g_gs_timer = 0.f;
+	g_next_challange_area = FIRST_CHALLANGE;
 
 	// Start logic
 	for (int i = 0; i < MAX_ENTITIES; i++)
@@ -314,18 +355,20 @@ void RunGame()
 	}
 
 	// Possibly insert new rock
-	if (g_gs == GS_PLAYING)
-	{
-		float trench = MAIN_SHIP.pos.y - g_current_race_pos; // How much advanced from previous frame
-		if (CORE_RandChance(trench * g_rock_chance))
-		{
-			vec2 pos = vmake(CORE_FRand(0.f, G_WIDTH), g_camera_offset + G_HEIGHT + 400.f); // Random x, insert 400y above window
-			vec2 vel = vmake(CORE_FRand(-1.f, +1.f), CORE_FRand(-1.f, +1.f)); // Random small velocity to make rocks "float"
-			InsertEntity(E_ROCK, pos, vel, ROCK_RADIUS, g_rock[CORE_URand(0,4)], true);
-		}
-		// Advance difficulty in level
-		g_rock_chance += (trench * EXTRA_ROCK_CHANCE_PER_PIXEL);
-	}
+	//if (g_gs == GS_PLAYING)
+	//{
+	//	float trench = MAIN_SHIP.pos.y - g_current_race_pos; // How much advanced from previous frame
+	//	if (CORE_RandChance(trench * g_rock_chance))
+	//	{
+	//		vec2 pos = vmake(CORE_FRand(0.f, G_WIDTH), g_camera_offset + G_HEIGHT + 400.f); // Random x, insert 400y above window
+	//		vec2 vel = vmake(CORE_FRand(-1.f, +1.f), CORE_FRand(-1.f, +1.f)); // Random small velocity to make rocks "float"
+	//		InsertEntity(E_ROCK, pos, vel, ROCK_RADIUS, g_rock[CORE_URand(0,4)], true);
+	//	}
+	//	// Advance difficulty in level
+	//	g_rock_chance += (trench * EXTRA_ROCK_CHANCE_PER_PIXEL);
+	//}
+
+	GenNextElements();
 
 	// Set camera to follow the main ship
 	g_camera_offset = MAIN_SHIP.pos.y - G_HEIGHT / 8.f;
@@ -452,7 +495,7 @@ int Main(void)
 		ProcessInput();
 		RunGame();
 		SYS_Pump();
-		SYS_Sleep(16);
+		SYS_Sleep(16); // Cant be static if game should run equally on different hardware!
 		g_time += FRAMETIME;
 	}
 	UnloadResources();
