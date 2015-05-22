@@ -4,7 +4,10 @@
 #include "sys.h"
 #include "core.h"
 
-#define SAFESUB(a, b) (a - b > 0 ? a - b: 0)
+#define SAFESUB(ARG_BASE, ARG_CHUNK)          (ARG_BASE - ARG_CHUNK > 0        ? ARG_BASE - ARG_CHUNK : 0)
+#define SAFEADD(ARG_BASE, ARG_CHUNK, ARG_MAX) (ARG_BASE + ARG_CHUNK <= ARG_MAX ? ARG_BASE + ARG_CHUNK : ARG_MAX)
+#define MAX(ARG_A, ARG_B) ((ARG_A)>(ARG_B)?(ARG_A):(ARG_B))
+#define MIN(ARG_A, ARG_B) ((ARG_A)<(ARG_B)?(ARG_A):(ARG_B))
 
 #define SPRITE_SCALE 8.f
 #define SHADOW_OFFSET 80.f
@@ -19,9 +22,16 @@
 #define MAINSHIP_RADIUS 100.f
 #define ROCK_RADIUS 100.f
 #define CRASH_VEL 20.f
-#define CRASH_ENERGY_LOSS 30.f
+#define ROCK_CRASH_ENERGY_LOSS 30.f
+#define MINE_CRASH_ENERGY_LOSS 80.f
 #define MAX_ENERGY 100.f
 #define MAX_FUEL 100.f
+#define ROCKET_SPEED 15.f
+#define MIN_TIME_BETWEEN_ROCKETS 1.f
+#define MIN_FUEL_FOR_HEAL MAX_FUEL / 2.f
+#define FUEL_HEAL_PER_FRAME .2f
+#define ENERGY_HEAL_PER_FRAME .1f
+#define JUICE_FUEL 30.f
 
 #define MAIN_SHIP g_entities[MAINSHIP_ENTITY]
 
@@ -42,7 +52,7 @@
 #define HORIZONTAL_SHIP_VEL 10.f
 #define SHIP_TILT_INC .2f
 #define SHIP_TILT_FRICTION .1f
-#define SHIP_MAX_TILT 2.f
+#define SHIP_MAX_TILT 1.5.f
 #define SHIP_HVEL_FRICTION .1f
 #define TILT_FUEL_COST .03f
 #define FRAME_FUEL_COST .01f
@@ -74,12 +84,12 @@ float g_gs_timer = 0.f;
 //---------------------------------------------------------------------------
 // Textures
 int g_ship_LL, g_ship_L, g_ship_C, g_ship_R, g_ship_RR;
-int g_bkg, g_pearl, g_energy, g_fuel, g_star;
+int g_bkg, g_pearl, g_energy, g_fuel, g_star, g_mine, g_drone;
 int g_rock[5];
 
 //---------------------------------------------------------------------------
 // Entities
-enum EType {E_NULL, E_MAIN, E_ROCK, E_STAR};
+enum EType { E_NULL, E_MAIN, E_ROCK, E_STAR, E_MINE, E_DRONE };
 
 #define MAX_ENTITIES 64
 
@@ -165,7 +175,12 @@ void UnloadResources()
 	CORE_UnloadBmp(g_star);
 }
 
+//----------------------------------------------------------------------------------
+// Level generation
 float g_next_challange_area = FIRST_CHALLANGE;
+vec2 g_last_conditioned = vmake(0.f, 0.f);
+#define PATH_TWIST_RATIO .5f // This means about 30 degrees maximum
+#define PATH_WIDTH (2.f * MAINSHIP_RADIUS)
 
 void GenNextElements()
 {
@@ -176,27 +191,49 @@ void GenNextElements()
 		LOG(("Current: %f\n", g_next_challange_area));
 
 		// Choose how many layers of rocks
-		int nlayers = (int)CORE_URand(1, 3);
+		int nlayers = (int)CORE_URand(1, 20);
 		LOG(("nlayers: %d\n", nlayers));
 		for (int i = 0; i < nlayers; i++)
 		{
 			LOG(("Where: %f\n", current_y));
 
+			// Choose pass point
+			float displace = (current_y - g_last_conditioned.y) * PATH_TWIST_RATIO;
+			float bracket_left = g_last_conditioned.x - displace;
+			float bracket_right = g_last_conditioned.x + displace;
+			bracket_left = MAX(bracket_left, 2.f * MAINSHIP_RADIUS);
+			bracket_right = MIN(bracket_right, G_WIDTH - 2.f * MAINSHIP_RADIUS);
+			g_last_conditioned.y = current_y;
+			g_last_conditioned.x = CORE_FRand(bracket_left, bracket_right);
+
 			// Choose how many rocks
-			int nrocks = (int)CORE_URand(1, 2);
+			int nrocks = (int)CORE_URand(0, 3);
 			LOG(("nrocks: %d\n", nrocks));
 
 			// Generate rocks
 			for (int i = 0; i < nrocks; i++)
 			{
-				vec2 pos = vmake(CORE_FRand(0.f, G_WIDTH), current_y);
-				vec2 vel = vmake(CORE_FRand(-1.f, 1.f), CORE_FRand(-1.f, 1.f));
-				InsertEntity(E_ROCK, pos, vel, ROCK_RADIUS, g_rock[1 /*CORE_URand(0, 4)*/], true);
+				// Find a valid position
+				vec2 rockpos;
+				for (;;)
+				{
+					rockpos = vmake(CORE_FRand(0.f, G_WIDTH), current_y);
+					if (rockpos.x + ROCK_RADIUS < g_last_conditioned.x - PATH_WIDTH
+						|| rockpos.x - ROCK_RADIUS > g_last_conditioned.x + PATH_WIDTH)
+						break;
+				}
+				// Insert obstacle
+				EType t = E_ROCK;
+				int gfx = g_rock[1/*CORE_URand(0,4)*/];
+				if (CORE_RandChance(0.1f)) { t = E_MINE; gfx = g_mine; } // Mine?
+				else if (CORE_RandChance(0.1f)) { t = E_DRONE; gfx = g_drone; } // Drone?
+				vec2 vel = vmake(CORE_FRand(-0.5f, 0.5f), CORE_FRand(-0.5f, 0.5f)); // velocity
+				InsertEntity(t, rockpos, vel, ROCK_RADIUS, gfx, true); // Insert the chosen entity
+
 			}
 			current_y += CORE_FRand(300.f, 600.f);
 		}
-		g_next_challange_area = current_y + CORE_FRand(0.5f * G_WIDTH, 1.5f * G_HEIGHT);
-		LOG(("Next: %f\n", g_next_challange_area));
+		g_next_challange_area = current_y + CORE_FRand(.5f * G_HEIGHT, 1.5f * G_HEIGHT);
 	}
 }
 
