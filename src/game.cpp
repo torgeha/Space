@@ -46,6 +46,8 @@
 #define START_ROCK_CHANCE_PER_PIXEL 1.f/1000.f
 #define EXTRA_ROCK_CHANCE_PER_PIXEL 0.f//1.f/2500000.f
 
+#define JUICE_CHANCE_PER_PIXEL 1.f/2500000.f // Took it from rock, no mention in code, should download and have a look
+
 #define SHIP_CRUISE_SPEED 25.f
 #define SHIP_START_SPEED 5.f
 #define SHIP_INC_SPEED .5f
@@ -89,7 +91,7 @@ int g_rock[5];
 
 //---------------------------------------------------------------------------
 // Entities
-enum EType { E_NULL, E_MAIN, E_ROCK, E_STAR, E_MINE, E_DRONE };
+enum EType { E_NULL, E_MAIN, E_ROCK, E_STAR, E_MINE, E_DRONE, E_JUICE, E_ROCKET };
 
 #define MAX_ENTITIES 64
 
@@ -310,12 +312,13 @@ void Render()
 void ResetNewGame()
 {
 	// Reset everything for a new game
+	g_next_challange_area = FIRST_CHALLANGE;
+	g_last_conditioned = vmake(0.5f * G_WIDTH, 0.f);
 	g_current_race_pos = 0.f;
 	g_camera_offset = 0.f;
 	g_rock_chance = START_ROCK_CHANCE_PER_PIXEL;
 	g_gs = GS_STARTING;
 	g_gs_timer = 0.f;
-	g_next_challange_area = FIRST_CHALLANGE;
 
 	// Start logic
 	for (int i = 0; i < MAX_ENTITIES; i++)
@@ -330,19 +333,28 @@ void ResetNewGame()
 void RunGame()
 {
 	// Control main ship
-	if (g_gs == GS_PLAYING || g_gs == GS_VICTORY)
+	if (g_gs == GS_VICTORY || g_gs == GS_STARTING)
 	{
 		if (MAIN_SHIP.vel.y < SHIP_CRUISE_SPEED)
 		{
-			MAIN_SHIP.vel.y += SHIP_INC_SPEED;
-			if (MAIN_SHIP.vel.y > SHIP_CRUISE_SPEED)
-				MAIN_SHIP.vel.y = SHIP_CRUISE_SPEED;
+			MAIN_SHIP.vel.y = SAFEADD(MAIN_SHIP.vel.y, SHIP_INC_SPEED, SHIP_CRUISE_SPEED);
 		}
 		MAIN_SHIP.fuel = SAFESUB(MAIN_SHIP.fuel, FRAME_FUEL_COST);
 	}
 
+	// Heal main ship
+	if (g_gs != GS_DYING)
+	{
+		if (MAIN_SHIP.energy < MAX_ENERGY && MAIN_SHIP.fuel > MIN_FUEL_FOR_HEAL)
+		{
+			MAIN_SHIP.energy = SAFEADD(MAIN_SHIP.energy, ENERGY_HEAL_PER_FRAME, MAX_ENERGY);
+			MAIN_SHIP.fuel = SAFESUB(MAIN_SHIP.fuel, FUEL_HEAL_PER_FRAME);
+			LOG(("- energy: %f, fuel: %f\n", MAIN_SHIP.energy, MAIN_SHIP.fuel));
+		}
+	}
+
 	// Move entities
-	for (int i = MAX_ENTITIES; i >= 0; i--)
+	for (int i = MAX_ENTITIES - 1; i >= 0; i--)
 	{
 		if (g_entities[i].type != E_NULL)
 		{
@@ -367,44 +379,108 @@ void RunGame()
 	if (MAIN_SHIP.pos.x > G_WIDTH - MAINSHIP_RADIUS)
 		MAIN_SHIP.pos.x = G_WIDTH - MAINSHIP_RADIUS;
 
-	// Check collision between main ship and rock
+	// Check collisions
 	if (g_gs == GS_PLAYING)
 	{
-		for (int i = 0; i < MAX_ENTITIES; i++)
+		// Check everything against ship
+		for (int i = 1; i < MAX_ENTITIES; i++)
 		{
-			if (g_entities[i].type == E_ROCK)
+			// Should check against ship?
+			if (g_entities[i].type == E_ROCK
+				|| g_entities[i].type == E_JUICE
+				|| g_entities[i].type == E_MINE
+				|| g_entities[i].type == E_DRONE)
 			{
-				float distance = vlen2(vsub(g_entities[i].pos, MAIN_SHIP.pos)); // Distance from rock to ship
+				float distance = vlen2(vsub(g_entities[i].pos, MAIN_SHIP.pos)); // Distance from object to ship
 				float crash_distance = CORE_FSquare(g_entities[i].radius + MAIN_SHIP.radius); // Minimum allowed distance before crash
 				if (distance < crash_distance)
 				{
-					MAIN_SHIP.energy = SAFESUB(MAIN_SHIP.energy, CRASH_ENERGY_LOSS); // Lose energy
-					MAIN_SHIP.vel.y = SHIP_START_SPEED; // slow down due to impact
+					switch (g_entities[i].type)
+					{
+					case E_ROCK:
+						if (g_entities[i].energy > 0)
+						{
+							MAIN_SHIP.energy = SAFESUB(MAIN_SHIP.energy, ROCK_CRASH_ENERGY_LOSS);
+							MAIN_SHIP.vel.y = SHIP_START_SPEED;
+							
+							// Set rock velocity
+							vec2 vel_direction = vsub(g_entities[i].pos, MAIN_SHIP.pos); // direction of rock velocity, away from ship
+							vec2 normalized_vel_direction = vunit(vel_direction); // normalize
+							vec2 vel = vscale(normalized_vel_direction, CRASH_VEL); // Scale, ie give the rock correct speed.
+							g_entities[i].vel = vel;
+							g_entities[i].energy = 0;
+						}
+						break;
 
-					// Set rock velocity
-					vec2 vel_direction = vsub(g_entities[i].pos, MAIN_SHIP.pos); // direction of rock velocity, away from ship
-					vec2 normalized_vel_direction = vunit(vel_direction); // normalize
-					vec2 vel = vscale(normalized_vel_direction, CRASH_VEL); // Scale, ie give the rock correct speed.
-					g_entities[i].vel = vel;
+					case E_JUICE:
+						MAIN_SHIP.fuel = SAFEADD(MAIN_SHIP.fuel, JUICE_FUEL, MAX_FUEL);
+						g_entities[i].type = E_NULL;
+						break;
+
+					case E_MINE:
+						MAIN_SHIP.energy = SAFESUB(MAIN_SHIP.energy, MINE_CRASH_ENERGY_LOSS);
+						MAIN_SHIP.vel.y = SHIP_START_SPEED;
+						g_entities[i].type = E_NULL;
+						break;
+
+					case E_DRONE:
+						MAIN_SHIP.energy = SAFESUB(MAIN_SHIP.energy, MINE_CRASH_ENERGY_LOSS);
+						MAIN_SHIP.vel.y = SHIP_START_SPEED;
+						g_entities[i].type = E_NULL;
+						break;
+
+					default:
+						break;
+					}
+				}
+			}
+			else if (g_entities[i].type == E_ROCKET)
+			{
+				// Check all hit-able objects against this rocket
+				for (int j = 1; i < MAX_ENTITIES; j++) 
+				{
+					// Should check against rocket?
+					if (g_entities[j].type == E_ROCK
+						|| g_entities[j].type == E_MINE
+						|| g_entities[j].type == E_DRONE)
+					{
+						float distance = vlen2(vsub(g_entities[i].pos, g_entities[j].pos));
+						float crash_distance = CORE_FSquare(g_entities[i].radius + g_entities[j].radius);
+						if (distance < crash_distance)
+						{
+							// Impact!
+							g_entities[i].type = E_NULL;
+							g_entities[j].type = E_NULL;
+
+							break;
+						}
+					}
 				}
 			}
 		}
 	}
 
-	// Possibly insert new rock
-	//if (g_gs == GS_PLAYING)
-	//{
-	//	float trench = MAIN_SHIP.pos.y - g_current_race_pos; // How much advanced from previous frame
-	//	if (CORE_RandChance(trench * g_rock_chance))
-	//	{
-	//		vec2 pos = vmake(CORE_FRand(0.f, G_WIDTH), g_camera_offset + G_HEIGHT + 400.f); // Random x, insert 400y above window
-	//		vec2 vel = vmake(CORE_FRand(-1.f, +1.f), CORE_FRand(-1.f, +1.f)); // Random small velocity to make rocks "float"
-	//		InsertEntity(E_ROCK, pos, vel, ROCK_RADIUS, g_rock[CORE_URand(0,4)], true);
-	//	}
-	//	// Advance difficulty in level
-	//	g_rock_chance += (trench * EXTRA_ROCK_CHANCE_PER_PIXEL);
-	//}
 
+	// INE THIS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1111
+
+	// Possibly insert new juice
+	if (g_gs == GS_PLAYING)
+	{
+		float trench = MAIN_SHIP.pos.y - g_current_race_pos; // How much advanced from previous frame
+		if (CORE_RandChance(trench * JUICE_CHANCE_PER_PIXEL))
+		{
+
+			// FROM HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!11
+
+			vec2 pos = vmake(CORE_FRand(0.f, G_WIDTH), g_camera_offset + G_HEIGHT + ); // Random x, insert 400y above window
+			vec2 vel = vmake(CORE_FRand(-1.f, +1.f), CORE_FRand(-1.f, +1.f)); // Random small velocity to make rocks "float"
+			InsertEntity(E_ROCK, pos, vel, ROCK_RADIUS, g_rock[CORE_URand(0,4)], true);
+		}
+		// Advance difficulty in level
+		g_rock_chance += (trench * EXTRA_ROCK_CHANCE_PER_PIXEL);
+	}
+
+	// Generate new level elements as we advance
 	GenNextElements();
 
 	// Set camera to follow the main ship
