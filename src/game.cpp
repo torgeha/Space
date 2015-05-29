@@ -460,8 +460,8 @@ void RunGame()
 		}
 	}
 
-
-	// INE THIS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1111
+	// Generate new level elements as we advance
+	GenNextElements();
 
 	// Possibly insert new juice
 	if (g_gs == GS_PLAYING)
@@ -469,26 +469,18 @@ void RunGame()
 		float trench = MAIN_SHIP.pos.y - g_current_race_pos; // How much advanced from previous frame
 		if (CORE_RandChance(trench * JUICE_CHANCE_PER_PIXEL))
 		{
-
-			// FROM HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!11
-
-			vec2 pos = vmake(CORE_FRand(0.f, G_WIDTH), g_camera_offset + G_HEIGHT + ); // Random x, insert 400y above window
+			vec2 pos = vmake(CORE_FRand(0.f, G_WIDTH), g_camera_offset + G_HEIGHT + GEN_IN_ADVANCE); // Random x, insert 400y above window
 			vec2 vel = vmake(CORE_FRand(-1.f, +1.f), CORE_FRand(-1.f, +1.f)); // Random small velocity to make rocks "float"
-			InsertEntity(E_ROCK, pos, vel, ROCK_RADIUS, g_rock[CORE_URand(0,4)], true);
+			InsertEntity(E_JUICE, pos, vel, JUICE_RADIUS, g_juice, false, true);
 		}
-		// Advance difficulty in level
-		g_rock_chance += (trench * EXTRA_ROCK_CHANCE_PER_PIXEL);
 	}
-
-	// Generate new level elements as we advance
-	GenNextElements();
 
 	// Set camera to follow the main ship
 	g_camera_offset = MAIN_SHIP.pos.y - G_HEIGHT / 8.f;
 
+	g_current_race_pos = MAIN_SHIP.pos.y;
 	if (g_gs == GS_PLAYING)
 	{
-		g_current_race_pos = MAIN_SHIP.pos.y; // Advance in level
 		if (g_current_race_pos >= RACE_END) // Check if victory
 		{
 			g_gs = GS_VICTORY;
@@ -515,10 +507,11 @@ void RunGame()
 		}
 		break;
 	case GS_PLAYING:
-		if (MAIN_SHIP.energy <= 0.f || MAIN_SHIP.energy <= 0.f) // No energy or fuel --> die
+		if (MAIN_SHIP.energy <= 0.f || MAIN_SHIP.fuel <= 0.f) // No energy or fuel --> die
 		{
 			g_gs = GS_DYING;
 			g_gs_timer = 0.f;
+			MAIN_SHIP.gfx = g_ship_RR;
 		}
 		break;
 	case GS_VICTORY:
@@ -533,6 +526,7 @@ void RunGame()
 		}
 		break;
 	}
+	g_time_from_last_rocket += FRAMETIME;
 }
 
 //-----------------------------------------------------------------------------
